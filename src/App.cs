@@ -395,7 +395,7 @@ class NetWin {
 
     void RouterUi() {
         bool has = Router.HasLogin;
-        routerLogin.Visibility = has ? Visibility.Collapsed : Visibility.Visible;
+        routerLogin.Visibility = has || !Router.CanLogin ? Visibility.Collapsed : Visibility.Visible; // marca sem leitura: não pede senha à toa
         rForget.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         if (!has && rUser.Text == "") rUser.Text = Router.User;
         RouterState();
@@ -404,7 +404,7 @@ class NetWin {
     // Cartão de estado da aba Roteador (1x por segundo): mostra a etapa enquanto lê, a hora da última leitura ou o erro
     void RouterState() {
         if (page != 5) return;
-        if (!Router.HasLogin) { rState.Visibility = Visibility.Collapsed; return; }
+        if (!Router.HasLogin || !Router.CanLogin) { rState.Visibility = Visibility.Collapsed; return; }
         string ph = Router.Phase; bool work = ph != "";
         rState.Visibility = Visibility.Visible;
         rBar.Visibility = work ? Visibility.Visible : Visibility.Collapsed;

@@ -118,6 +118,15 @@ static class SelfTest {
         Check("aparelho sem nome no Wi-Fi: sinal fraco e consumo", row("Aparelho sem nome").Badge == "Sinal fraco" && row("Aparelho sem nome").Text.Contains("aleatório") && row("Aparelho sem nome").Text.Contains("94,9 MB"));
         Check("offline usa o Active do aparelho (nao o do IPv6) e vai para o fim", row("iPhone").Badge == "Offline" && rr.Last().Title == "iPhone");
         Check("cabo + nomes para a aba Dispositivos", row("pc-sala").Badge == "Cabo" && Router.Names["10.0.0.18"] == "pc-sala" && !Router.Names.ContainsKey("10.0.0.33"));
+        Check("login completo: sem aviso de usuario limitado", row("Seu usuário") == null);
+        // usuário comum: o roteador devolve página sem os dados para fibra e Wi-Fi
+        var lim = new Dictionary<string, string>(pg); lim["/wan_status.cgi?gpon"] = "<html>Acesso negado</html>"; lim["/sta_info.cgi"] = "";
+        var lr = Router.Parse(lim, 0); var lw = lr.FirstOrDefault(x => x.Title.StartsWith("Seu usuário"));
+        Check("usuario limitado: mostra o que veio e lista o que falta", lw != null && lw.Sub.Contains("fibra") && lw.Sub.Contains("Wi-Fi") && lr[0] == lw
+            && !lr.Any(x => x.Title.StartsWith("Sinal da fibra")) && lr.Any(x => x.Title == "pc-sala") && lr.Any(x => x.Title.StartsWith("Internet do provedor")));
+        Check("marca do roteador pela pagina inicial", Router.DetectBrand("<title>GPON Home Gateway</title>") == "Nokia" && Router.DetectBrand("<title>ZXHN F670L</title>") == "ZTE"
+            && Router.DetectBrand("<title>Archer C6</title>") == "TP-Link" && Router.DetectBrand("HUAWEI EchoLife HG8245H") == "Huawei" && Router.DetectBrand("<b>Intelbras</b>") == "Intelbras"
+            && Router.DetectBrand("<html><title>Login</title></html>") == "" && Router.DetectBrand("Basus vasus") == "");
         // --- DNS da casa: pacote, bloqueio, agrupamento por site
         var dq = new List<byte> { 0xAB, 0xCD, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 1 };
         foreach (var lb in "www.instagram.com".Split('.')) { dq.Add((byte)lb.Length); dq.AddRange(Encoding.ASCII.GetBytes(lb)); }

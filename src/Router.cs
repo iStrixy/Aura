@@ -133,7 +133,7 @@ static class Router {
     // ------------------------------------------------------------ HTTP com sessão
     // Cookies guardados à mão: o CookieContainer do .NET descarta em silêncio cookies com atributos fora do padrão
     static Dictionary<string, string> jar = new Dictionary<string, string>();
-    static string lastHeaders = "";
+    static string lastHeaders = "", lastLoc, lastServer;
     static string Http(string path, string post, out int status) {
         var rq = (HttpWebRequest)WebRequest.Create("http://" + Host + path);
         rq.Proxy = null; rq.KeepAlive = false; rq.Timeout = 8000; rq.AllowAutoRedirect = false;
@@ -157,6 +157,7 @@ static class Router {
             }
             // Para diagnóstico: nomes dos cabeçalhos e dos cookies, nunca os valores
             lastHeaders = status + " " + path + " | " + string.Join(", ", r.Headers.AllKeys) + " | cookies: " + string.Join(", ", jar.Keys) + " | location: " + r.Headers["Location"];
+            lastLoc = r.Headers["Location"]; lastServer = r.Headers["Server"];
             return sr.ReadToEnd();
         }
     }
@@ -209,6 +210,38 @@ static class Router {
             }
         }
         return Plain(s);
+    }
+
+    // ------------------------------------------------------------ Marca do roteador (pela página inicial do gateway, sem login)
+    static readonly string[][] Brands = {
+        new[] { "Nokia", @"GPON Home Gateway|\bnokia\b|\bALCL\b" }, new[] { "ZTE", @"\bZTE\b|ZXHN|\bF6[0-9]{2}\b" }, new[] { "Huawei", @"huawei|EchoLife|\bHG8\d{3}" },
+        new[] { "TP-Link", @"TP-?LINK|\bArcher\b|\bDeco\b" }, new[] { "Mercusys", @"mercusys" }, new[] { "Intelbras", @"intelbras" }, new[] { "Fiberhome", @"fiberhome|AN5506" },
+        new[] { "D-Link", @"D-?Link" }, new[] { "Tenda", @"\btenda\b" }, new[] { "MikroTik", @"mikrotik|RouterOS" }, new[] { "ASUS", @"\basus\b" },
+        new[] { "Xiaomi", @"miwifi|xiaomi" }, new[] { "Sagemcom", @"sagemcom" }, new[] { "Askey", @"\baskey\b" }, new[] { "Multilaser", @"multilaser" } };
+    public static string DetectBrand(string page) {
+        foreach (var b in Brands) if (Regex.IsMatch(page ?? "", b[1], RegexOptions.IgnoreCase)) return b[0];
+        return "";
+    }
+    public static string Brand; static string brandHost; // null = ainda não olhou; "" = não reconheceu
+    public static bool CanLogin { get { return Brand == null || Brand == "Nokia"; } } // login só foi feito (e testado) para o painel Nokia
+    static string Detect() {
+        int st; string s = Http("/", null, out st) + " " + lastServer;
+        if (st >= 300 && st < 400 && !string.IsNullOrEmpty(lastLoc)) { // muitos roteadores mandam "/" para "/login.html"
+            Uri u; string p = Uri.TryCreate(lastLoc, UriKind.Absolute, out u) ? u.PathAndQuery : lastLoc;
+            if (SafePage(p)) s += Http(p.StartsWith("/") ? p : "/" + p, null, out st) + " " + lastServer;
+        }
+        return DetectBrand(s);
+    }
+    static Row BrandRow() {
+        if (Brand == "Nokia") return R("Roteador Nokia reconhecido", "Painel em http://" + Host + "  ·  leitura com login disponível",
+            "Com login o Aura lê o sinal da fibra, a internet, o próprio roteador e os aparelhos da casa. O que aparece depende do nível do usuário: "
+            + "o usuário comum (o da etiqueta embaixo do aparelho) costuma ver só parte das páginas; o administrador ou o login de suporte do provedor vê tudo. "
+            + "O que o seu usuário não puder ver aparece listado nesta aba. O Aura só lê: nunca muda nada no roteador.", "Suportado", Kb.Green, 0);
+        if (Brand == "") return R("Roteador não reconhecido", "Painel em http://" + Host,
+            "Não reconheci a marca pela página do roteador. Funciona sem login: o monitor deste PC e a lista de aparelhos da rede (aba Dispositivos).", "Desconhecido", Kb.Gray, 0);
+        return R("Roteador " + Brand + " reconhecido", "Painel em http://" + Host + "  ·  leitura com login ainda não disponível para esta marca",
+            "Cada fabricante tem um painel diferente e o Aura por enquanto só sabe ler o da Nokia. Funciona sem login: o monitor deste PC e a lista de aparelhos da rede (aba Dispositivos).",
+            "Só detecção", Kb.Blue, 0);
     }
 
     // ------------------------------------------------------------ Descoberta das páginas (só as de status)
@@ -271,9 +304,12 @@ static class Router {
     public static bool Cgnat(string ip) { var p = (ip ?? "").Split('.'); int b; return p.Length == 4 && p[0] == "100" && int.TryParse(p[1], out b) && b >= 64 && b <= 127; }
 
     public static List<Row> Parse(Dictionary<string, string> pg, double dt) {
-        var rows = new List<Row>(); var names = new Dictionary<string, string>();
+        var rows = new List<Row>(); var names = new Dictionary<string, string>(); var hidden = new List<string>();
+        Func<string, string, string> pb = (page, name) => { string v; return pg.TryGetValue(page, out v) ? Block(v, name) : null; };
+        // Usuário com menos permissão recebe a página sem os dados (ou uma página de erro): cada parte só aparece se o dado veio
         // ---- Fibra óptica
-        string gpon = Block(pg["/wan_status.cgi?gpon"], "gpon_status");
+        string gpon = pb("/wan_status.cgi?gpon", "gpon_status");
+        if (gpon == null) hidden.Add("sinal da fibra"); else {
         double rawRx = Num(gpon, "RXPower"), rx = Dbm(rawRx), tx = Dbm(Num(gpon, "TXPower")), ot = Num(gpon, "TransceiverTemperature") / 256;
         string fv; int fl;
         if (!(rawRx > 0)) { fv = "Sem sinal"; fl = 2; }
@@ -285,8 +321,11 @@ static class Router {
             "É a luz que chega do provedor pela fibra. Faixa boa: de -8 a -25 dBm (quanto mais perto de -8, mais forte). Abaixo de -27 a internet cai ou fica instável: "
             + "aí é fibra dobrada, suja ou conector ruim e precisa de técnico. " + (fl == 0 ? "O seu está ótimo, a fibra não é a causa de nenhuma lentidão." : fl == 1 && rx > -8 ? "Sinal acima de -8 pode saturar o receptor: vale avisar o suporte." : "O seu está fora da faixa boa: vale chamar o suporte."),
             fv, Kb.LevelColor(fl), fl));
+        }
         // ---- Internet (WAN)
-        string wan = Items(Block(pg["/show_wan_status.cgi?ipv4"], "wan_conns"), "_type").FirstOrDefault(c => Str(c, "ConnectionStatus") == "Connected" && !string.IsNullOrEmpty(Str(c, "ExternalIPAddress")));
+        string wb = pb("/show_wan_status.cgi?ipv4", "wan_conns");
+        if (wb == null) hidden.Add("internet (IP e DNS)"); else {
+        string wan = Items(wb, "_type").FirstOrDefault(c => Str(c, "ConnectionStatus") == "Connected" && !string.IsNullOrEmpty(Str(c, "ExternalIPAddress")));
         if (wan == null) rows.Add(R("Internet do provedor", "Desconectada", "O roteador não está com a conexão de internet ativa agora.", "Caiu", Kb.Red, 2));
         else {
             string ip = Str(wan, "ExternalIPAddress"), v6 = Str(wan, "X_CT_COM_IPv6IPAddress"), dns = Str(wan, "DNSServers");
@@ -297,22 +336,27 @@ static class Router {
                 + (string.IsNullOrEmpty(dns) ? "" : " DNS entregue pelo provedor: " + dns.Replace(",", ", ") + "."),
                 "Conectada", Kb.Green, 0));
         }
+        }
         // ---- O próprio roteador
-        string dev = pg["/device_status.cgi"], di = Block(dev, "dev_info"), mem = Block(dev, "mem_info");
+        string dev; pg.TryGetValue("/device_status.cgi", out dev); string di = Block(dev, "dev_info"), mem = Block(dev, "mem_info");
+        if (di == null) hidden.Add("modelo e temperatura do roteador"); else {
         double cpuT = Num(Block(dev, "cpu_temperatureinfo"), "CPUTemp"), total = Num(mem, "Total"), used = 100 * (total - Num(mem, "Free")) / total;
         rows.Add(R("Roteador " + (Str(di, "Manufacturer") == "ALCL" ? "Nokia " : "") + Str(di, "ModelName"),
             "Ligado há " + Dur(Num(di, "UpTime")) + (double.IsNaN(cpuT) ? "" : "  ·  processador a " + cpuT.ToString("0") + " °C") + (double.IsNaN(used) ? "" : "  ·  memória " + used.ToString("0") + "% em uso"),
             "Modem de fibra com Wi-Fi instalado pelo provedor. Ficar dias sem reiniciar é normal: só reinicie se algo estiver errado. "
             + (cpuT > 85 ? "O processador está quente demais: deixe o aparelho num lugar ventilado, longe de outros eletrônicos." : "Temperatura normal para esse aparelho (preocupa acima de uns 85 °C)."),
             cpuT > 85 ? "Quente" : "Ok", cpuT > 85 ? Kb.Yellow : Kb.Green, cpuT > 85 ? 1 : 0));
+        }
         // ---- Aparelhos (lista do roteador + sinal e consumo de quem está no Wi-Fi)
         var wifi = new Dictionary<string, string>(); var now = new Dictionary<string, long[]>();
-        foreach (var c in Items(Block(pg["/sta_info.cgi"], "wlan_client"), "SSID")) {
+        string sta = pb("/sta_info.cgi", "wlan_client"), lan = pb("/lan_status.cgi?wlan", "device_cfg");
+        if (lan == null) hidden.Add("lista de aparelhos"); else if (sta == null) hidden.Add("sinal e consumo de cada aparelho no Wi-Fi");
+        foreach (var c in Items(sta, "SSID")) {
             string mac = (Str(c, "AssociatedDeviceMACAddress") ?? "").ToLowerInvariant(); if (mac == "") continue;
             wifi[mac] = c; now[mac] = new[] { (long)Num(c, "data_sent_next"), (long)Num(c, "data_receive_next") };
         }
         var devs = new List<Row>();
-        foreach (var d in Items(Block(pg["/lan_status.cgi?wlan"], "device_cfg"), "HostName")) {
+        foreach (var d in Items(lan, "HostName")) {
             string host = Str(d, "HostName"), ip = Str(d, "IPAddress"), mac = (Str(d, "MACAddress") ?? "").ToLowerInvariant(), type = Str(d, "InterfaceType") ?? "";
             if (ip == null) continue;
             bool online = Regex.IsMatch(d, @"AddressSource\s*:\s*'\w*'\s*,\s*Active\s*:\s*1"), cable = type == "Ethernet";
@@ -346,6 +390,9 @@ static class Router {
             devs.Add(R((noName ? "Aparelho sem nome" : host) + (me ? " (este PC)" : ""), sub + "  ·  MAC " + mac, text, badge, color, level));
         }
         rows.AddRange(devs.OrderBy(r => r.Badge == "Offline").ThenBy(r => r.Title));
+        if (hidden.Count > 0) rows.Insert(0, R("Seu usuário não vê tudo", "Bloqueado para este login: " + string.Join(", ", hidden),
+            "O roteador entrega menos informação para usuários com menos permissão (o usuário comum da etiqueta costuma ver só o básico). "
+            + "Para ver o resto é preciso entrar com o usuário administrador do roteador. Não é erro do Aura nem do roteador.", "Limitado", Kb.Yellow, 1));
         lastWifi = now; Names = names;
         return rows;
     }
@@ -354,8 +401,10 @@ static class Router {
     public static List<Row> Read() {
         lock (gate) {
             var rows = new List<Row>();
+            if (brandHost != Host) { brandHost = Host; try { Brand = Detect(); } catch (Exception e) { Brand = ""; Program.Log(e); } }
+            if (Brand != null) rows.Add(BrandRow());
             if (UpnpOk) rows.Add(R("Internet da casa toda agora", "↓ " + Fmt.Speed(HouseDown) + "   ↑ " + Fmt.Speed(HouseUp), "Soma de todos os aparelhos da casa (PC, celulares, TV), medida pelo próprio roteador. Não precisa de login.", "Ao vivo", Kb.Blue, 0));
-            if (!HasLogin) return rows;
+            if (!HasLogin || !CanLogin) return rows;
             try {
                 if ((DateTime.UtcNow - readAt).TotalSeconds > 15) {
                     readAt = DateTime.UtcNow; // marca antes: se falhar, não tenta de novo a cada atualização da tela
