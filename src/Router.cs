@@ -397,6 +397,16 @@ static class Router {
         return rows;
     }
 
+    static bool noDataRetried;
+    static bool HasData(Dictionary<string, string> pg) { return Block(pg["/device_status.cgi"], "dev_info") != null; }
+    static Dictionary<string, string> ReadPages() {
+        var pg = new Dictionary<string, string>();
+        foreach (var p in StatusPages.Where(SafePage)) {
+            Phase = "Lendo dados do painel (" + (pg.Count + 1) + " de " + StatusPages.Length + ")…";
+            string s = Get(p); if (s == null) break; pg[p] = s; if (!dumped) Dump(p, s);
+        }
+        return pg;
+    }
     // Lê o roteador (no máximo a cada 15 s) e devolve as linhas da aba Roteador
     public static List<Row> Read() {
         lock (gate) {
@@ -408,11 +418,15 @@ static class Router {
             try {
                 if ((DateTime.UtcNow - readAt).TotalSeconds > 15) {
                     readAt = DateTime.UtcNow; // marca antes: se falhar, não tenta de novo a cada atualização da tela
-                    var pg = new Dictionary<string, string>();
-                    foreach (var p in StatusPages.Where(SafePage)) {
-                        Phase = "Lendo dados do painel (" + (pg.Count + 1) + " de " + StatusPages.Length + ")…";
-                        string s = Get(p); if (s == null) break; pg[p] = s; if (!dumped) Dump(p, s);
+                    var pg = ReadPages();
+                    // Sessão vencida (~10 min parado): o Nokia devolve uma página sem dados que não é a tela de login.
+                    // Entra de novo UMA vez; se continuar sem dados, é limite do usuário (não fica logando a cada 15 s).
+                    if (pg.Count == StatusPages.Length && !HasData(pg) && !noDataRetried) {
+                        foreach (var kv in pg) Dump("_sem_dados" + kv.Key, kv.Value);
+                        Diag("páginas sem dados: login de novo | " + lastHeaders);
+                        loggedIn = false; pg = ReadPages();
                     }
+                    noDataRetried = pg.Count == StatusPages.Length && !HasData(pg);
                     Phase = ""; LastOk = pg.Count == StatusPages.Length;
                     if (LastOk) {
                         OkAt = DateTime.Now;
@@ -428,9 +442,15 @@ static class Router {
         }
     }
     // Aura.exe --roteador: uma leitura, grava as linhas em roteador\_linhas.txt. Código de saída 0 = conectou.
-    public static int ReadOnce() {
+    // Aura.exe --roteador-pagina /menu.cgi: entra e salva UMA página (sem senhas) em roteador\, para mapear o painel. Só páginas seguras.
+    public static int DumpPage(string path) {
         Settings.Load();
-        Read(); System.Threading.Thread.Sleep(16000); // duas leituras: a segunda já mostra a velocidade de cada aparelho no Wi-Fi
+        if (!SafePage(path)) { Console.WriteLine("página recusada (parece ação): " + path); return 2; }
+        lock (gate) { string s = Get(path); if (s == null) return 1; Dump("_pagina" + path, s); return 0; }
+    }
+    public static int ReadOnce(int waitSec) {
+        Settings.Load();
+        Read(); System.Threading.Thread.Sleep(waitSec * 1000); // duas leituras: a segunda já mostra a velocidade de cada aparelho no Wi-Fi (ou testa a sessão vencida, com espera longa)
         var rows = Read();
         Directory.CreateDirectory(DumpDir);
         File.WriteAllLines(Path.Combine(DumpDir, "_linhas.txt"), rows.Select(r => r.Title + " | " + r.Sub + " | " + r.Badge + " | " + r.Text), Encoding.UTF8);

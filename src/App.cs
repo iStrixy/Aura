@@ -59,7 +59,8 @@ static class Program {
     static int Main(string[] args) {
         Thread.CurrentThread.CurrentCulture = new CultureInfo("pt-BR");
         if (args.Contains("--selftest")) return SelfTest.Run();
-        if (args.Contains("--roteador")) return Router.ReadOnce(); // lê o roteador sem abrir janela (teste/diagnóstico)
+        if (args.Length == 2 && args[0] == "--roteador-pagina") return Router.DumpPage(args[1]);
+        int wait; if (args.Contains("--roteador")) return Router.ReadOnce(int.TryParse(args.Last(), out wait) ? wait : 16); // lê o roteador sem abrir janela (teste/diagnóstico)
         var open = new EventWaitHandle(false, EventResetMode.AutoReset, "AuraOpenNet");
         bool first; var mutex = new Mutex(true, "AuraSingleInstance", out first);
         // Já está rodando: pede para abrir a janela de rede. Quem tem o direito de foco é este processo (o usuário acabou
