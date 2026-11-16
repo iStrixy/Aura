@@ -305,6 +305,23 @@
                 <ProgressBar x:Name="RBar" Height="3" IsIndeterminate="True" Margin="0,8,0,0" Foreground="{StaticResource AuraGrad}" Background="#14FFFFFF" BorderThickness="0"/>
               </StackPanel>
             </Border>
+            <!-- Testes e ações pelo roteador (só Nokia com login) -->
+            <Border x:Name="RTools" Style="{StaticResource Card}" Margin="0,0,0,12" Visibility="Collapsed">
+              <StackPanel>
+                <TextBlock Style="{StaticResource Cap}" Text="TESTES PELO ROTEADOR"/>
+                <TextBlock FontSize="12.5" Foreground="#A6FFFFFF" TextWrapping="Wrap" Margin="0,6,0,12"
+                           Text="O próprio roteador testa o caminho até um site ou IP. O ping mede o tempo de resposta; o traceroute mostra cada parada no caminho. Ajuda a saber se a lentidão é na sua casa ou no provedor."/>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                  <TextBox x:Name="RHost" Style="{StaticResource Field}" Text="8.8.8.8" Margin="0,0,10,0"/>
+                  <Button x:Name="RPing" Grid.Column="1" Style="{StaticResource Pill}" Content="Ping" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                  <Button x:Name="RTrace" Grid.Column="2" Style="{StaticResource Pill}" Content="Traceroute" VerticalAlignment="Center"/>
+                </Grid>
+                <TextBox x:Name="ROut" Visibility="Collapsed" IsReadOnly="True" Margin="0,12,0,0" FontFamily="Consolas" FontSize="12" Foreground="#D9FFFFFF"
+                         Background="#26000000" BorderThickness="0" Padding="10,8" TextWrapping="Wrap" MaxHeight="260" VerticalScrollBarVisibility="Auto"/>
+                <Button x:Name="RReboot" Style="{StaticResource Pill}" Content="Reiniciar roteador" HorizontalAlignment="Left" Margin="0,14,0,0"/>
+              </StackPanel>
+            </Border>
             <ItemsControl x:Name="RouterList" ItemTemplate="{StaticResource RowT}"/>
             <Button x:Name="RForget" Style="{StaticResource Pill}" Content="Esquecer login do roteador" HorizontalAlignment="Left" Margin="0,4,0,0" Visibility="Collapsed"/>
           </StackPanel>

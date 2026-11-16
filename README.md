@@ -18,7 +18,7 @@ que **explica** cada conexão, DNS e aparelho da casa: o que é, de quem é, se 
 | 🌐 **Conexões** | Cada programa que está usando a internet, para onde vai (Google, Riot, Discord…) e se é normal, rastreador ou suspeito. |
 | 🔎 **Domínios, portas e DNS** | Quais sites o PC consultou, quais portas estão abertas para a rede e se o seu DNS é privado. |
 | 📱 **Dispositivos** | Os aparelhos ligados na sua rede, com o nome que o roteador conhece. |
-| 📡 **Roteador** | Sinal da fibra, IP de internet (avisa CGNAT), temperatura do roteador, redes Wi-Fi (canal e segurança), redes vizinhas, DHCP e DNS da casa, portas de cabo, portas abertas para a internet, sinal e consumo de cada aparelho no Wi-Fi. |
+| 📡 **Roteador** | Sinal da fibra, IP de internet (avisa CGNAT), temperatura do roteador, redes Wi-Fi (canal e segurança), redes vizinhas, DHCP e DNS da casa, portas de cabo, portas abertas para a internet, sinal e consumo de cada aparelho no Wi-Fi. Ping e traceroute feitos pelo próprio roteador e botão para reiniciá-lo. |
 | 🛡️ **Sites da casa** | Opcional: DNS da casa com bloqueio de anúncios e rastreadores, ou histórico do NextDNS por aparelho. |
 
 Leve de verdade: **~0,3% de um núcleo e ~75 MB de RAM** só com o widget. A coleta detalhada só roda com a janela de rede aberta.
@@ -60,7 +60,8 @@ O que aparece depende de **com qual usuário você entra**, porque o próprio ro
 Quando falta alguma coisa, a aba Roteador mostra **"Seu usuário não vê tudo"** e lista exatamente o que ficou bloqueado.
 Não é erro: é o roteador protegendo as páginas.
 
-**Segurança:** o Aura **só lê**. Ele usa uma lista fixa de páginas de status e nunca abre páginas de configuração, reiniciar ou sair.
+**Segurança:** a leitura usa uma lista fixa de páginas de status e nunca muda configuração. As únicas ações são as que você clica:
+**Ping**, **Traceroute** (feitos pelo roteador) e **Reiniciar roteador**, que pede confirmação antes, porque a internet da casa cai por 2 a 3 minutos.
 A senha fica só no seu PC, protegida pelo Windows (DPAPI, só o seu usuário do Windows consegue abrir). Se o roteador
 recusar o login, o Aura **não tenta de novo sozinho**, para não bloquear o painel.
 

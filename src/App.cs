@@ -244,6 +244,7 @@ class NetWin {
     readonly ScrollViewer routerScroll; readonly ItemsControl routerList; readonly Border routerLogin; readonly TextBlock houseDown, houseUp;
     readonly TextBox rUser; readonly PasswordBox rPass; readonly Button rForget; List<Row> routerRows, siteRows;
     readonly Border rState; readonly TextBlock rStateText; readonly ProgressBar rBar;
+    readonly Border rTools; readonly TextBox rHost, rOut;
     readonly Border ndCard; readonly TextBox ndProfile; readonly PasswordBox ndKey; readonly Button ndForget;
 
     static readonly string[] Titles = { "Visão geral", "Conexões", "Domínios", "Portas", "Dispositivos", "Roteador", "Sites da casa" };
@@ -298,6 +299,11 @@ class NetWin {
         F<Button>("RSave").Click += save;
         rPass.KeyDown += (s, e) => { if (e.Key == Key.Enter) save(s, e); };
         rForget.Click += delegate { Router.Forget(); RouterUi(); Refresh(); };
+        rTools = F<Border>("RTools"); rHost = F<TextBox>("RHost"); rOut = F<TextBox>("ROut");
+        F<Button>("RPing").Click += delegate { RunDiag(false); };
+        F<Button>("RTrace").Click += delegate { RunDiag(true); };
+        rHost.KeyDown += (s, e) => { if (e.Key == Key.Enter) RunDiag(false); };
+        F<Button>("RReboot").Click += delegate { RebootRouter(); };
         RoutedEventHandler ndSave = delegate {
             if (NextDns.CleanProfile(ndProfile.Text) == "" || ndKey.Password.Trim() == "") { ndProfile.Text = "ID inválido (6 letras/números)"; return; }
             NextDns.Save(ndProfile.Text, ndKey.Password); ndKey.Clear(); NdUi(); Refresh();
@@ -398,8 +404,27 @@ class NetWin {
         bool has = Router.HasLogin;
         routerLogin.Visibility = has || !Router.CanLogin ? Visibility.Collapsed : Visibility.Visible; // marca sem leitura: não pede senha à toa
         rForget.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+        rTools.Visibility = has && Router.Brand == "Nokia" ? Visibility.Visible : Visibility.Collapsed;
         if (!has && rUser.Text == "") rUser.Text = Router.User;
         RouterState();
+    }
+
+    // Ping/traceroute pelo roteador: a saída chega aos pedaços enquanto o roteador testa
+    async void RunDiag(bool trace) {
+        string host = rHost.Text.Trim(); if (host == "") return;
+        rTools.IsEnabled = false; rOut.Visibility = Visibility.Visible;
+        rOut.Text = (trace ? "Traceroute" : "Ping") + " até " + host + " feito pelo roteador…\n";
+        string err = await Task.Run(() => Router.Diagnose(host, trace, s => W.Dispatcher.BeginInvoke(new Action(() => { rOut.AppendText(s); rOut.ScrollToEnd(); }))));
+        rOut.AppendText(err == null ? "\n✓ Terminou." : "\n✕ " + err); rOut.ScrollToEnd();
+        rTools.IsEnabled = true;
+    }
+    async void RebootRouter() {
+        if (MessageBox.Show(W, "Reiniciar o roteador agora?\n\nA internet e o Wi-Fi da casa toda caem por 2 a 3 minutos, inclusive nos celulares e na TV.",
+                "Aura", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        rTools.IsEnabled = false; rOut.Visibility = Visibility.Visible; rOut.Text = "Pedindo para o roteador reiniciar…";
+        string err = await Task.Run(() => Router.Reboot());
+        rOut.Text = err == null ? "✓ O roteador está reiniciando. A internet volta em 2 a 3 minutos e o Aura reconecta sozinho." : "✕ " + err;
+        rTools.IsEnabled = true;
     }
 
     // Cartão de estado da aba Roteador (1x por segundo): mostra a etapa enquanto lê, a hora da última leitura ou o erro

@@ -547,12 +547,53 @@ static class Router {
     }
     // Aura.exe --roteador: uma leitura, grava as linhas em roteador\_linhas.txt. Código de saída 0 = conectou.
     // Aura.exe --roteador-pagina /menu.cgi: entra e salva UMA página (sem senhas) em roteador\, para mapear o painel. Só páginas seguras.
+    // ------------------------------------------------------------ Ações: só com clique (e confirmação, no caso de reiniciar) do usuário
+    // Mesmo esquema do painel: token CSRF e chave pública vêm da página; o POST vai cifrado como no login.
+    static bool Form(string path, out string token, out string pem) {
+        string s = Get(path) ?? "";
+        token = Grab(s, @"name=""csrf_token"" value=""([^""]+)""");
+        pem = Grab(s, @"-----BEGIN PUBLIC KEY-----([\s\S]*?)-----END");
+        if (pem != null) pem = Regex.Replace(pem, @"[\\\s]", "");
+        return token != null && pem != null;
+    }
+    // Ping ou traceroute feito pelo próprio roteador. Devolve null se terminou, senão a mensagem de erro.
+    public static string Diagnose(string host, bool trace, Action<string> output) {
+        if (!Regex.IsMatch(host ?? "", @"^[A-Za-z0-9.\-:]{1,128}$")) return "Endereço inválido: use um IP (8.8.8.8) ou um site (google.com).";
+        lock (gate) {
+            if (!HasLogin || Brand != "Nokia") return "Precisa estar conectado a um roteador Nokia.";
+            string tok, pem; if (!Form("/diag.cgi?ping", out tok, out pem)) return "Não consegui abrir a página de diagnóstico do roteador" + (Status != "" ? ": " + Status : ".");
+            string body = "csrf_val=&csrf_token=" + tok + "&ipversion=" + (host.Contains(":") ? "ipv6" : "ipv4") + "&iface=&ip_address_name=0&ipaddr=" + Uri.EscapeDataString(host)
+                        + (trace ? "&checkall=trace&packetlength=64&tracehops=30" : "&checkall=ping&pingcount=4&packetlength=64");
+            int st; string f = Plain(Http("/diag.cgi?ping", EncryptPost(pem, body), out st)).Trim();
+            if (!Regex.IsMatch(f, @"^[\w.\-]{1,64}$")) { Diag("diag: resposta inesperada " + st); return "O roteador não começou o teste (resposta inesperada)."; }
+            var until = DateTime.UtcNow.AddSeconds(trace ? 150 : 40);
+            while (DateTime.UtcNow < until) { // o painel lê a saída aos pedaços: ">" na frente = ainda tem mais
+                string d = Plain(Http("/command.cgi?cat+" + f, "csrf_token=" + tok, out st));
+                if (!d.StartsWith(">")) return null;
+                output(d.Substring(1));
+                System.Threading.Thread.Sleep(300);
+            }
+            return "O teste demorou demais e foi interrompido.";
+        }
+    }
+    // Reinicia o roteador (o painel faz o mesmo POST no botão "Reboot"). Devolve null se o roteador confirmou.
+    public static string Reboot() {
+        lock (gate) {
+            if (!HasLogin || Brand != "Nokia") return "Precisa estar conectado a um roteador Nokia.";
+            string tok, pem; if (!Form("/reboot.cgi", out tok, out pem)) return "Não consegui abrir a página de reiniciar do roteador" + (Status != "" ? ": " + Status : ".");
+            int st; string r = Plain(Http("/reboot.cgi?reboot", EncryptPost(pem, "data&csrf_token=" + tok), out st));
+            loggedIn = false; Diag("reboot: " + st + " " + (r.Length > 60 ? r.Substring(0, 60) : r));
+            return r.Contains("done reboot") ? null : "O roteador não confirmou o pedido (resposta " + st + ").";
+        }
+    }
+
     // Páginas do Nokia que só mostram configuração (o nome tem "config", mas o GET só exibe; mudar exige POST)
     static readonly string[] ViewPages = { "/wlan_config.cgi", "/wlan_config.cgi?v=11ac", "/wan_config_glb.cgi" };
     public static int DumpPage(IEnumerable<string> paths) {
         Settings.Load(); int fail = 0;
         lock (gate) foreach (var path in paths) {
-            if (!SafePage(path) && !ViewPages.Contains(path)) { fail++; continue; }
+            // reboot.cgi/diag.cgi: o GET só mostra a página com o botão (é o que o menu do painel faz); a ação é um POST separado
+            if (!SafePage(path) && !ViewPages.Contains(path) && path != "/reboot.cgi" && !path.StartsWith("/diag.cgi?")) { fail++; continue; }
             string s = Get(path); if (s == null) { fail++; continue; } Dump("_pagina" + path, s);
         }
         return fail;
