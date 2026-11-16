@@ -70,11 +70,11 @@ static class Router {
             Settings.Set("router_user", user.Trim());
             Directory.CreateDirectory(Usage.Dir);
             File.WriteAllBytes(PassFile, ProtectedData.Protect(Encoding.UTF8.GetBytes(pass), null, DataProtectionScope.CurrentUser));
-            loggedIn = refused = stuck = false; info = new List<Row>(); readAt = DateTime.MinValue; Status = ""; Phase = "Conectando ao roteador…";
+            loggedIn = refused = stuck = false; info = new List<Row>(); extra.Clear(); extraAt = DateTime.MinValue; readAt = DateTime.MinValue; Status = ""; Phase = "Conectando ao roteador…";
         }
     }
     public static void Forget() {
-        lock (gate) { try { File.Delete(PassFile); } catch { } Settings.Set("router_user", ""); loggedIn = stuck = false; info = new List<Row>(); readAt = DateTime.MinValue; Status = ""; }
+        lock (gate) { try { File.Delete(PassFile); } catch { } Settings.Set("router_user", ""); loggedIn = stuck = false; info = new List<Row>(); extra.Clear(); extraAt = DateTime.MinValue; readAt = DateTime.MinValue; Status = ""; }
     }
     static string Pass() {
         try { return Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(PassFile), null, DataProtectionScope.CurrentUser)); }
@@ -297,7 +297,7 @@ static class Router {
     public static string Dur(double sec) {
         if (double.IsNaN(sec)) return "?";
         if (sec >= 172800) return Math.Floor(sec / 86400) + " dias";
-        if (sec >= 86400) return "1 dia e " + Math.Floor(sec % 86400 / 3600) + " h";
+        if (sec >= 86400) return sec < 90000 ? "1 dia" : "1 dia e " + Math.Floor(sec % 86400 / 3600) + " h";
         if (sec >= 3600) return Math.Floor(sec / 3600) + " h " + Math.Floor(sec % 3600 / 60) + " min";
         return Math.Max(1, Math.Floor(sec / 60)) + " min";
     }
@@ -347,6 +347,7 @@ static class Router {
             + (cpuT > 85 ? "O processador está quente demais: deixe o aparelho num lugar ventilado, longe de outros eletrônicos." : "Temperatura normal para esse aparelho (preocupa acima de uns 85 °C)."),
             cpuT > 85 ? "Quente" : "Ok", cpuT > 85 ? Kb.Yellow : Kb.Green, cpuT > 85 ? 1 : 0));
         }
+        rows.AddRange(ParseConfig(pg, hidden, pb, wb != null && Cgnat(Str(wb, "ExternalIPAddress"))));
         // ---- Aparelhos (lista do roteador + sinal e consumo de quem está no Wi-Fi)
         var wifi = new Dictionary<string, string>(); var now = new Dictionary<string, long[]>();
         string sta = pb("/sta_info.cgi", "wlan_client"), lan = pb("/lan_status.cgi?wlan", "device_cfg");
@@ -398,6 +399,18 @@ static class Router {
     }
 
     static bool noDataRetried;
+    // Páginas de configuração (mudam pouco): lidas a cada 5 min, não a cada 15 s
+    public static readonly string[] ExtraPages = { "/wlan_config.cgi", "/wlan_config.cgi?v=11ac", "/neighboring_AP.cgi", "/lan_ipv4.cgi", "/lan_status.cgi?lan", "/nat_glb.cgi?v=vhost", "/upnp.cgi" };
+    static Dictionary<string, string> extra = new Dictionary<string, string>(); static DateTime extraAt;
+    static void ReadExtra() {
+        if ((DateTime.UtcNow - extraAt).TotalSeconds < 300) return;
+        extraAt = DateTime.UtcNow; int n = 0;
+        foreach (var p in ExtraPages) {
+            Phase = "Lendo configurações do roteador (" + (++n) + " de " + ExtraPages.Length + ")…";
+            if (!SafePage(p) && !ViewPages.Contains(p)) continue;
+            string s = Get(p); if (s == null) break; extra[p] = s;
+        }
+    }
     static bool HasData(Dictionary<string, string> pg) { return Block(pg["/device_status.cgi"], "dev_info") != null; }
     static Dictionary<string, string> ReadPages() {
         var pg = new Dictionary<string, string>();
@@ -407,6 +420,95 @@ static class Router {
         }
         return pg;
     }
+    // Wi-Fi, redes vizinhas, DHCP/DNS, portas de cabo e portas abertas. Só entra o que a página trouxe (página ainda não lida = nada).
+    static List<Row> ParseConfig(Dictionary<string, string> pg, List<string> hidden, Func<string, string, string> pb, bool cgnat) {
+        var rows = new List<Row>(); var myCh = new HashSet<double>();
+        // ---- Redes Wi-Fi do roteador. A senha nunca vai para a tela.
+        foreach (var band in new[] { new[] { "/wlan_config.cgi", "2,4 GHz" }, new[] { "/wlan_config.cgi?v=11ac", "5 GHz" } }) {
+            if (!pg.ContainsKey(band[0])) continue;
+            string wc = pb(band[0], "wlan_config");
+            if (wc == null) { hidden.Add("redes Wi-Fi " + band[1]); continue; }
+            foreach (var n in Items(wc, "Flag")) {
+                if (Num(n, "Enable") != 1 || Num(n, "RadioEnabled") == 0) continue;
+                string ssid = Str(n, "SSID") ?? "", bt = Str(n, "BeaconType") ?? "";
+                double ch = Num(n, "Channel"); bool auto = Num(n, "AutoChannelEnable") == 1, oculta = Num(n, "SSIDAdvertisementEnabled") == 0;
+                if (!double.IsNaN(ch)) myCh.Add(ch);
+                string bandName = ch > 0 && ch <= 14 ? "2,4 GHz" : ch > 14 ? "5 GHz" : band[1]; // a página do 5 GHz também lista redes internas de 2,4
+                if (oculta && Regex.IsMatch(ssid, @"^[A-Za-z0-9/+=]{8}$")) { // nome aleatório e escondida: rede que o roteador cria para os repetidores (mesh)
+                    rows.Add(R("Rede interna do mesh", bandName + "  ·  canal " + ch + "  ·  oculta", "Rede escondida que o roteador cria sozinho para conversar com repetidores Nokia (Beacon/mesh). É normal: nenhum aparelho seu usa ela diretamente.", "Interna", Kb.Gray, 0));
+                    continue;
+                }
+                string sec; int lv;
+                if (bt == "None" || bt == "Basic") { sec = "Aberta (sem senha)"; lv = 2; }
+                else if (bt.Contains("WPA3")) { sec = "WPA3"; lv = 0; }
+                else if (bt == "WPAand11i") { sec = "WPA + WPA2 (misto)"; lv = 1; }
+                else if (bt == "11i") { sec = "WPA2"; lv = 0; }
+                else { sec = bt; lv = 0; }
+                rows.Add(R("Wi-Fi \"" + ssid + "\"", bandName + "  ·  canal " + ch + (auto ? " (automático)" : " (fixo)") + "  ·  " + sec + (oculta ? "  ·  oculta" : ""),
+                    (lv == 2 ? "Rede sem senha: qualquer pessoa por perto entra e usa a sua internet. Coloque uma senha WPA2 ou WPA3. "
+                     : lv == 1 ? "Aceita também o WPA antigo (quebrável) para aparelhos velhos. Se nenhum aparelho da casa precisar, deixe só WPA2 ou WPA2/WPA3. "
+                     : "Segurança boa. ")
+                    + (auto ? "O roteador escolhe o canal sozinho." : "Canal fixo: se muitos vizinhos usarem o mesmo canal, trocar (no 2,4 GHz, use 1, 6 ou 11) ou deixar no automático pode melhorar a velocidade."),
+                    lv == 0 ? "Protegida" : lv == 1 ? "Atenção" : "Aberta", Kb.LevelColor(lv), lv));
+            }
+        }
+        // ---- Redes vizinhas (da última busca que o próprio roteador fez)
+        if (pg.ContainsKey("/neighboring_AP.cgi")) {
+            string nb = pb("/neighboring_AP.cgi", "neibor_AP");
+            if (nb == null) hidden.Add("redes vizinhas"); else {
+                var aps = Items(nb, "SSID").Where(a => !double.IsNaN(Num(a, "Channel"))).OrderByDescending(a => Num(a, "SignalStrength")).ToList();
+                int same = aps.Count(a => myCh.Contains(Num(a, "Channel")) && Num(a, "SignalStrength") > -70);
+                rows.Add(R("Redes Wi-Fi vizinhas", aps.Count + (aps.Count == 1 ? " rede" : " redes") + " por perto" + (same > 0 ? "  ·  " + same + " forte(s) no mesmo canal que a sua" : ""),
+                    (aps.Count == 0 ? "O roteador não viu nenhuma rede por perto na última busca. " :
+                        string.Join("; ", aps.Take(10).Select(a => (string.IsNullOrEmpty(Str(a, "SSID")) ? "(nome oculto)" : Str(a, "SSID")) + ", canal " + Num(a, "Channel") + ", " + Num(a, "SignalStrength") + " dBm, " + Str(a, "SecurityModeEnabled"))) + ". ")
+                    + "Rede vizinha forte (acima de -70 dBm) no mesmo canal disputa o ar com a sua e deixa o Wi-Fi mais lento. A lista é da última busca feita pelo roteador.",
+                    same > 0 ? "Mesmo canal" : "Ok", same > 0 ? Kb.Yellow : Kb.Green, same > 0 ? 1 : 0));
+            }
+        }
+        // ---- DHCP e DNS que a casa recebe
+        if (pg.ContainsKey("/lan_ipv4.cgi")) {
+            string dc = pb("/lan_ipv4.cgi", "ipv4_config");
+            if (dc == null) hidden.Add("DHCP e DNS da casa"); else {
+                bool on = Num(dc, "DHCPServerEnable") == 1; string dns = Str(dc, "DNSServers") ?? "";
+                Verdict dv = dns.Split(',').Select(x => { IPAddress a; return IPAddress.TryParse(x.Trim(), out a) ? Kb.ExplainDns(a, null) : null; }).FirstOrDefault(v => v != null);
+                rows.Add(R("Rede da casa (DHCP)", on ? "Entrega IPs de " + Str(dc, "MinAddress") + " a " + Str(dc, "MaxAddress") + "  ·  aluguel de " + Dur(Num(dc, "DHCPLeaseTime")) + "  ·  DNS " + (dns == "" ? "o próprio roteador" : dns.Replace(",", ", ")) : "DHCP desligado",
+                    (on ? "O DHCP do roteador dá um IP para cada aparelho que entra na rede (o \"aluguel\" é quanto tempo o IP fica reservado). " : "O roteador não está entregando IPs: outro aparelho da rede faz isso, ou cada aparelho tem IP fixo. ")
+                    + (dns == "" ? "Os aparelhos usam o roteador como DNS, que repassa para o DNS do provedor." : "Todos os aparelhos da casa recebem este DNS. " + (dv != null ? dv.Text : "")),
+                    dv != null ? dv.Badge : "Ok", dv != null ? Kb.LevelColor(dv.Level) : Kb.Green, dv != null ? dv.Level : 0));
+            }
+        }
+        // ---- Portas de cabo do roteador
+        if (pg.ContainsKey("/lan_status.cgi?lan")) {
+            string le = pb("/lan_status.cgi?lan", "lan_ether");
+            if (le == null) hidden.Add("portas de cabo"); else {
+                var ports = Items(le, "Enable").Select((p, i) => new { N = i + 1, Up = Str(p, "Status") == "Up", Rate = Str(p, "X_ALU_COM_CurMaxBitRate") ?? "" }).ToList();
+                bool slow = ports.Any(p => p.Up && p.Rate == "100");
+                rows.Add(R("Portas de cabo do roteador", string.Join("  ·  ", ports.Select(p => "LAN" + p.N + ": " + (p.Up ? (p.Rate == "Auto" || p.Rate == "" ? "conectada" : p.Rate + " Mbps") : "sem cabo"))),
+                    "Velocidade combinada entre o roteador e o aparelho no cabo. 1000 Mbps é o normal. " + (slow ? "Uma porta está a 100 Mbps: cabo velho, mal crimpado ou placa antiga; isso limita a internet daquele aparelho a 100 Mbps." : ""),
+                    slow ? "100 Mbps" : "Ok", slow ? Kb.Yellow : Kb.Green, slow ? 1 : 0));
+            }
+        }
+        // ---- Portas abertas para a internet (redirecionamento, DMZ e UPnP)
+        if (pg.ContainsKey("/nat_glb.cgi?v=vhost")) {
+            string pm = pb("/nat_glb.cgi?v=vhost", "port_mappings");
+            if (pm == null) hidden.Add("portas abertas (redirecionamento)"); else {
+                string net = Host.Substring(0, Host.LastIndexOf('.') + 1);
+                var maps = Items(pm, "PortMappingEnabled").Where(m => Num(m, "PortMappingEnabled") == 1).ToList();
+                var stale = maps.Where(m => !(Str(m, "InternalClient") ?? "").StartsWith(net)).ToList();
+                bool dmz = Regex.IsMatch(pm, @"DmzEnabled\s*:\s*1"), upnp = Regex.IsMatch(pg.ContainsKey("/upnp.cgi") ? pg["/upnp.cgi"] : "", @"upnp_config\s*=\s*\{\s*Enable\s*:\s*1");
+                int lv = stale.Count > 0 || dmz ? 1 : 0;
+                rows.Add(R("Portas abertas para a internet", (maps.Count == 0 ? "Nenhum redirecionamento" : string.Join("  ·  ", maps.Select(m => "porta " + Num(m, "ExternalPort") + " " + Str(m, "PortMappingProtocol") + " → " + Str(m, "InternalClient") + ":" + Num(m, "InternalPort")))) + (dmz ? "  ·  DMZ ligada" : "") + "  ·  UPnP " + (upnp ? "ligado" : "desligado"),
+                    (maps.Count == 0 ? "Nenhuma porta foi aberta à mão no roteador. " : "Redirecionamento manda quem chega da internet naquela porta para um aparelho da casa (servidor de jogo, câmera, acesso remoto). ")
+                    + (stale.Count > 0 ? "Atenção: " + string.Join(", ", stale.Select(m => "a porta " + Num(m, "ExternalPort") + " aponta para " + Str(m, "InternalClient"))) + ", que não é da sua rede (" + net + "x): é uma regra antiga esquecida e pode ser apagada no painel. " : "")
+                    + (dmz ? "A DMZ manda TODAS as portas para um aparelho: só use se souber o que está fazendo. " : "")
+                    + (upnp ? "UPnP ligado: jogos e programas (Xbox, PlayStation, Discord) abrem portas sozinhos quando precisam; é o normal para quem joga. " : "")
+                    + (cgnat ? "Com CGNAT nada disso fica acessível pela internet via IPv4." : ""),
+                    lv == 1 ? "Revisar" : "Ok", Kb.LevelColor(lv), lv));
+            }
+        }
+        return rows;
+    }
+
     // Lê o roteador (no máximo a cada 15 s) e devolve as linhas da aba Roteador
     public static List<Row> Read() {
         lock (gate) {
@@ -427,7 +529,9 @@ static class Router {
                         loggedIn = false; pg = ReadPages();
                     }
                     noDataRetried = pg.Count == StatusPages.Length && !HasData(pg);
-                    Phase = ""; LastOk = pg.Count == StatusPages.Length;
+                    LastOk = pg.Count == StatusPages.Length;
+                    if (LastOk) { ReadExtra(); foreach (var kv in extra) pg[kv.Key] = kv.Value; }
+                    Phase = "";
                     if (LastOk) {
                         OkAt = DateTime.Now;
                         dumped = true;
@@ -443,10 +547,15 @@ static class Router {
     }
     // Aura.exe --roteador: uma leitura, grava as linhas em roteador\_linhas.txt. Código de saída 0 = conectou.
     // Aura.exe --roteador-pagina /menu.cgi: entra e salva UMA página (sem senhas) em roteador\, para mapear o painel. Só páginas seguras.
-    public static int DumpPage(string path) {
-        Settings.Load();
-        if (!SafePage(path)) { Console.WriteLine("página recusada (parece ação): " + path); return 2; }
-        lock (gate) { string s = Get(path); if (s == null) return 1; Dump("_pagina" + path, s); return 0; }
+    // Páginas do Nokia que só mostram configuração (o nome tem "config", mas o GET só exibe; mudar exige POST)
+    static readonly string[] ViewPages = { "/wlan_config.cgi", "/wlan_config.cgi?v=11ac", "/wan_config_glb.cgi" };
+    public static int DumpPage(IEnumerable<string> paths) {
+        Settings.Load(); int fail = 0;
+        lock (gate) foreach (var path in paths) {
+            if (!SafePage(path) && !ViewPages.Contains(path)) { fail++; continue; }
+            string s = Get(path); if (s == null) { fail++; continue; } Dump("_pagina" + path, s);
+        }
+        return fail;
     }
     public static int ReadOnce(int waitSec) {
         Settings.Load();

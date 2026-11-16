@@ -124,6 +124,24 @@ static class SelfTest {
         var lr = Router.Parse(lim, 0); var lw = lr.FirstOrDefault(x => x.Title.StartsWith("Seu usuário"));
         Check("usuario limitado: mostra o que veio e lista o que falta", lw != null && lw.Sub.Contains("fibra") && lw.Sub.Contains("Wi-Fi") && lr[0] == lw
             && !lr.Any(x => x.Title.StartsWith("Sinal da fibra")) && lr.Any(x => x.Title == "pc-sala") && lr.Any(x => x.Title.StartsWith("Internet do provedor")));
+        // páginas de configuração (formato real do Nokia, dados fictícios)
+        var full = new Dictionary<string, string>(pg);
+        full["/wlan_config.cgi"] = "var wlan_config = { 1:{\"Flag\":\"0\", SSIDAdvertisementEnabled:1, RadioEnabled:1, Enable:1, SSID:'Casa 2G', BSSID:'10:00:00:00:00:99', Channel:11, AutoChannelEnable:0, BeaconType:'WPAand11i', WPAEncryptionModes:'AESEncryption' },"
+            + " 2:{\"Flag\":\"0\", SSIDAdvertisementEnabled:1, RadioEnabled:1, Enable:0, SSID:'Convidados', Channel:11, BeaconType:'None' } };";
+        full["/wlan_config.cgi?v=11ac"] = "var wlan_config = { 5:{\"Flag\":\"0\", SSIDAdvertisementEnabled:0, RadioEnabled:1, Enable:1, SSID:'Casa 5G', Channel:44, AutoChannelEnable:1, BeaconType:'11i' }, 6:{\"Flag\":\"0\", SSIDAdvertisementEnabled:0, RadioEnabled:1, Enable:1, SSID:'Ab3dE6/0', Channel:11, BeaconType:'11i' } };";
+        full["/neighboring_AP.cgi"] = "var neibor_AP = [{SSID:'', Channel:11, SignalStrength:-53, BSSID:'3a:00:00:00:00:01', SecurityModeEnabled:'WPA2', OperatingStandards:'n', Noise:-96, }, {SSID:'Vizinho', Channel:6, SignalStrength:-80, SecurityModeEnabled:'WPA2' } ] ;";
+        full["/lan_ipv4.cgi"] = "var ipv4_config={ DHCPServerConfigurable:1, DHCPServerEnable:1, MinAddress:'10.0.0.10', MaxAddress:'10.0.0.253', DNSServers:'45.90.28.235,45.90.30.235', DHCPLeaseTime:86400 };";
+        full["/lan_status.cgi?lan"] = "var lan_ether = { 1:{ Enable:1, Status:'Up', X_ALU_COM_CurMaxBitRate:'1000', stat:{ BytesSent:0 } }, 2:{ Enable:1, Status:'NoLink', X_ALU_COM_CurMaxBitRate:'Auto' } };";
+        full["/nat_glb.cgi?v=vhost"] = "var port_mappings=[{wan_num:1, ipConns:[{ dmz:{DmzEnabled:0, InternalClient:'' }, portmaps:[ { _oid:1, PortMappingEnabled:1, ExternalPort:5000, InternalPort:8080, PortMappingProtocol:'TCP', InternalClient:'192.168.1.77', PortMappingDescription:'teste' } ] }]}];";
+        full["/upnp.cgi"] = "var upnp_config = {Enable:1 };";
+        var fr = Router.Parse(full, 0); Func<string, Row> frow = pre => fr.FirstOrDefault(x => x.Title.StartsWith(pre));
+        Check("wifi: nome, canal, modo misto e rede desligada fora", frow("Wi-Fi \"Casa 2G\"") != null && frow("Wi-Fi \"Casa 2G\"").Badge == "Atenção" && frow("Wi-Fi \"Casa 2G\"").Sub.Contains("canal 11 (fixo)")
+            && frow("Wi-Fi \"Casa 5G\"").Sub.Contains("oculta") && frow("Wi-Fi \"Convidados\"") == null && !fr.Any(x => x.Text.Contains("AESEncryption")));
+        Check("rede oculta de nome aleatorio = mesh interno, banda pelo canal", frow("Rede interna do mesh") != null && frow("Rede interna do mesh").Sub.StartsWith("2,4 GHz") && frow("Wi-Fi \"Ab3dE6") == null);
+        Check("vizinhas: forte no mesmo canal", frow("Redes Wi-Fi vizinhas").Badge == "Mesmo canal" && frow("Redes Wi-Fi vizinhas").Sub.StartsWith("2 redes") && frow("Redes Wi-Fi vizinhas").Text.Contains("(nome oculto)"));
+        Check("dhcp: faixa, aluguel e NextDNS reconhecido", frow("Rede da casa").Sub.Contains("10.0.0.10 a 10.0.0.253") && frow("Rede da casa").Sub.Contains("1 dia") && frow("Rede da casa").Text.Contains("NextDNS") && frow("Rede da casa").Badge == "Privado");
+        Check("portas de cabo", frow("Portas de cabo").Sub == "LAN1: 1000 Mbps  ·  LAN2: sem cabo");
+        Check("redirecionamento fora da rede = revisar; upnp", frow("Portas abertas").Badge == "Revisar" && frow("Portas abertas").Text.Contains("192.168.1.77") && frow("Portas abertas").Sub.Contains("UPnP ligado"));
         Check("marca do roteador pela pagina inicial", Router.DetectBrand("<title>GPON Home Gateway</title>") == "Nokia" && Router.DetectBrand("<title>ZXHN F670L</title>") == "ZTE"
             && Router.DetectBrand("<title>Archer C6</title>") == "TP-Link" && Router.DetectBrand("HUAWEI EchoLife HG8245H") == "Huawei" && Router.DetectBrand("<b>Intelbras</b>") == "Intelbras"
             && Router.DetectBrand("<html><title>Login</title></html>") == "" && Router.DetectBrand("Basus vasus") == "");

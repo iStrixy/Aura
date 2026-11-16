@@ -1,4 +1,4 @@
-// Base de conhecimento offline: quem é o dono de um domínio/IP, para que serve uma porta, e o veredito em português simples.
+﻿// Base de conhecimento offline: quem é o dono de um domínio/IP, para que serve uma porta, e o veredito em português simples.
 // Para ensinar algo novo ao app, basta acrescentar uma linha em HostData / IpData / PortData / AppData.
 using System;
 using System.Collections.Generic;
@@ -61,6 +61,7 @@ static class Kb {
         "Google DNS|servidor DNS público da Google (traduz nomes de sites em endereços)|8.8.8.8/32 8.8.4.4/32 2001:4860:4860::/48",
         "Cloudflare DNS|servidor DNS público da Cloudflare, focado em privacidade|1.1.1.1/32 1.0.0.1/32 2606:4700:4700::/48",
         "Quad9 DNS|servidor DNS público que bloqueia sites maliciosos|9.9.9.9/32 149.112.112.112/32",
+        "NextDNS|DNS na nuvem configurável: bloqueia anúncios e rastreadores e guarda o histórico que você escolher|45.90.28.0/22 2a07:a8c0::/29",
         "OpenDNS|servidor DNS público da Cisco|208.67.222.222/32 208.67.220.220/32",
         "AdGuard DNS|servidor DNS que bloqueia anúncios|94.140.14.14/32 94.140.15.15/32",
         "Cloudflare|rede que protege e acelera sites (CDN); milhares de sites passam por ela|104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 162.158.0.0/15 188.114.96.0/20 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 198.41.128.0/17 173.245.48.0/20 2606:4700::/32 2a06:98c0::/29",
@@ -277,7 +278,7 @@ static class Kb {
     // Explica um servidor DNS configurado
     public static Verdict ExplainDns(IPAddress ip, IPAddress gateway) {
         Org o = ByIp(ip);
-        if (o != null && (o.Name.StartsWith("Cloudflare") || o.Name.StartsWith("Quad9") || o.Name.StartsWith("AdGuard")))
+        if (o != null && (o.Name.StartsWith("Cloudflare") || o.Name.StartsWith("Quad9") || o.Name.StartsWith("AdGuard") || o.Name == "NextDNS"))
             return V(0, "Privado", o.Name, o.Name + ": " + o.What + ". Boa escolha para privacidade.");
         if (o != null) return V(1, "Registra dados", o.Name, o.Name + ": " + o.What + ". Rápido e confiável, mas a empresa registra as consultas.");
         if (IsLocal(ip)) return V(0, "Roteador", "Seu roteador", "O roteador responde as consultas e repassa para o DNS do provedor de internet.");

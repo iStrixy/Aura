@@ -1,4 +1,4 @@
-﻿<p align="center"><img src="assets/banner.svg" alt="Aura" width="100%"></p>
+<p align="center"><img src="assets/banner.svg" alt="Aura" width="100%"></p>
 
 <p align="center">
   <a href="https://github.com/iStrixy/Aura/releases/latest"><img src="https://img.shields.io/github/v/release/iStrixy/Aura?label=baixar&color=2E9BD6" alt="Baixar"></a>
@@ -18,7 +18,7 @@ que **explica** cada conexão, DNS e aparelho da casa: o que é, de quem é, se 
 | 🌐 **Conexões** | Cada programa que está usando a internet, para onde vai (Google, Riot, Discord…) e se é normal, rastreador ou suspeito. |
 | 🔎 **Domínios, portas e DNS** | Quais sites o PC consultou, quais portas estão abertas para a rede e se o seu DNS é privado. |
 | 📱 **Dispositivos** | Os aparelhos ligados na sua rede, com o nome que o roteador conhece. |
-| 📡 **Roteador** | Sinal da fibra, IP de internet (avisa CGNAT), temperatura do roteador, sinal e consumo de cada aparelho no Wi-Fi. |
+| 📡 **Roteador** | Sinal da fibra, IP de internet (avisa CGNAT), temperatura do roteador, redes Wi-Fi (canal e segurança), redes vizinhas, DHCP e DNS da casa, portas de cabo, portas abertas para a internet, sinal e consumo de cada aparelho no Wi-Fi. |
 | 🛡️ **Sites da casa** | Opcional: DNS da casa com bloqueio de anúncios e rastreadores, ou histórico do NextDNS por aparelho. |
 
 Leve de verdade: **~0,3% de um núcleo e ~75 MB de RAM** só com o widget. A coleta detalhada só roda com a janela de rede aberta.
